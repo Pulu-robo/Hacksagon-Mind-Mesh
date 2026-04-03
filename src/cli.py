@@ -26,102 +26,51 @@ app = typer.Typer(
 
 console = Console()
 
-
 @app.command()
+def version():
+    """Show version information."""
+    copilot = DataScienceCopilot()
+    version_info = copilot.get_version_info()
+    
+    panel = Panel.fit(
+        f"[bold cyan]Data Science Copilot[/bold cyan]\n"
+        f"Version: [green]{version_info['version']}[/green]\n"
+        f"Build: [yellow]{version_info['build']}[/yellow]\n"
+        f"Release Date: [magenta]{version_info['release_date']}[/magenta]",
+        title="Version Information",
+        border_style="blue"
+    )
+    
+    console.print(panel)
+ @app.command()
 def profile(
-    file_path: str = typer.Argument(..., help="Path to dataset file")
+    file_path: str = typer.Argument(..., help="Path to dataset file"),
+    output: str = typer.Option(None, "--output", "-o", help="Output file path for profiling report")
 ):
     """
-    Quick profile of a dataset (basic statistics and quality checks).
+    Profile dataset and generate insights.
     
     Example:
-        python cli.py profile data.csv
+        python cli.py profile data.csv --output report.json
     """
-    from tools.data_profiling import profile_dataset, detect_data_quality_issues
+    from tools.data_profiling import profile_dataset
+    
+    if output is None:
+        output = f"./outputs/data/profile_{Path(file_path).stem}.json"
     
     console.print(f"\n📊 [bold]Profiling:[/bold] {file_path}\n")
     
     # Profile
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as progress:
-        task1 = progress.add_task("Analyzing dataset...", total=None)
-        profile = profile_dataset(file_path)
-        progress.update(task1, completed=True)
-    
-    # Display basic info
-    info_table = Table(title="Dataset Information", show_header=False)
-    info_table.add_column("Property", style="cyan")
-    info_table.add_column("Value", style="white")
-    
-    info_table.add_row("Rows", str(profile["shape"]["rows"]))
-    info_table.add_row("Columns", str(profile["shape"]["columns"]))
-    info_table.add_row("Memory", f"{profile['memory_usage']['total_mb']} MB")
-    info_table.add_row("Null %", f"{profile['overall_stats']['null_percentage']}%")
-    info_table.add_row("Duplicates", str(profile['overall_stats']['duplicate_rows']))
-    
-    console.print()
-    console.print(info_table)
-    
-    # Column types
-    console.print("\n[bold]Column Types:[/bold]")
-    console.print(f"  Numeric: {len(profile['column_types']['numeric'])}")
-    console.print(f"  Categorical: {len(profile['column_types']['categorical'])}")
-    console.print(f"  Datetime: {len(profile['column_types']['datetime'])}")
-    
-    # Detect issues
-    console.print("\n[bold]Quality Check:[/bold]")
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as progress:
-        task2 = progress.add_task("Detecting quality issues...", total=None)
-        issues = detect_data_quality_issues(file_path)
-        progress.update(task2, completed=True)
-    
-    console.print(f"  🔴 Critical: {issues['summary']['critical_count']}")
-    console.print(f"  🟡 Warnings: {issues['summary']['warning_count']}")
-    console.print(f"  🔵 Info: {issues['summary']['info_count']}")
-
-
-@app.command()
-def clean(
-    file_path: str = typer.Argument(..., help="Path to dataset file"),
-    output: str = typer.Option(None, "--output", "-o", help="Output file path"),
-    strategy: str = typer.Option("auto", "--strategy", "-s", help="Cleaning strategy (auto/median/mean/mode/drop)")
-):
-    """
-    Clean dataset (handle missing values and outliers).
-    
-    Example:
-        python cli.py clean data.csv --output cleaned_data.csv
-    """
-    from tools.data_cleaning import clean_missing_values
-    from tools.data_profiling import profile_dataset
-    
-    if output is None:
-        output = f"./outputs/data/cleaned_{Path(file_path).name}"
-    
-    console.print(f"\n🧹 [bold]Cleaning:[/bold] {file_path}\n")
-    
-    # Get columns with missing values
-    profile = profile_dataset(file_path)
-    cols_with_nulls = {
-        col: "auto"
-        for col, info in profile["columns"].items()
-        if info["null_count"] > 0
-    }
-    
-    if not cols_with_nulls:
-        console.print("[green]✓ No missing values found - dataset is clean![/green]")
-        return
-    
-    console.print(f"Found {len(cols_with_nulls)} columns with missing values")
-    
-    # Clean
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as progress:
-        task = progress.add_task("Cleaning dataset...", total=None)
-        result = clean_missing_values(file_path, cols_with_nulls, output)
+        task = progress.add_task("Analyzing dataset...", total=None)
+        result = profile_dataset(file_path)
         progress.update(task, completed=True)
     
-    console.print(f"\n[green]✓ Cleaned dataset saved to: {output}[/green]")
-    console.print(f"  Rows: {result['original_rows']} → {result['final_rows']}")
-
+    # Save report
+    with open(output, "w") as f:
+        json.dump(result, f, indent=4)
+    
+    console.print(f"\n[green]✓ Profiling complete! Report saved to: {output}[/green]") 
 
 @app.command()
 def train(
