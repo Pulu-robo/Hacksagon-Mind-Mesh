@@ -55,11 +55,6 @@ def clean_missing_values(file_path: str, strategy,
     validate_file_exists(file_path)
     validate_file_format(file_path)
     
-    # Additional check for file size to prevent memory issues
-    file_size = os.path.getsize(file_path)
-    if file_size > 100 * 1024 * 1024:  # 100MB limit
-        raise ValueError(f"File too large ({file_size} bytes). Consider sampling or preprocessing.")
-    
     # Load data
     df = load_dataframe(file_path)
     validate_dataframe(df)

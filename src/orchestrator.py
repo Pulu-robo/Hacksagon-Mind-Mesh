@@ -12,7 +12,6 @@ from pathlib import Path
 import time
 import httpx
 
-# Enhanced with dynamic routing and improved error handling
 from groq import Groq
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -42,9 +41,12 @@ import asyncio
 from difflib import get_close_matches
 from .tools import (
     # Basic Tools (13) - UPDATED: Added get_smart_summary + 3 wrangling tools
+    # Basic Tools (13) - UPDATED: Added get_smart_summary + 3 wrangling tools
     profile_dataset,
     detect_data_quality_issues,
     analyze_correlations,
+    detect_label_errors,  # NEW: cleanlab label error detection
+    get_smart_summary,  # NEW
     detect_label_errors,  # NEW: cleanlab label error detection
     get_smart_summary,  # NEW
     clean_missing_values,
