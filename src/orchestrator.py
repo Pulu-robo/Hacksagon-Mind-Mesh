@@ -12,6 +12,7 @@ from pathlib import Path
 import time
 import httpx
 
+# Enhanced with dynamic routing and improved error handling
 from groq import Groq
 import google.generativeai as genai
 from dotenv import load_dotenv
