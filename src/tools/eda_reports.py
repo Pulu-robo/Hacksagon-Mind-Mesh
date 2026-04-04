@@ -1,0 +1,260 @@
+"""
+EDA Report Generation Tools
+Generates comprehensive HTML reports using ydata-profiling.
+"""
+
+import os
+import warnings
+from pathlib import Path
+from typing import Dict, Any, Optional
+import polars as pl
+
+# Suppress multiprocessing warnings from ydata-profiling cleanup
+warnings.filterwarnings("ignore", category=UserWarning, module="multiprocessing")
+warnings.filterwarnings("ignore", message=".*resource_tracker.*")
+
+
+def generate_ydata_profiling_report(
+    file_path: str,
+    output_path: str = "./outputs/reports/ydata_profile.html",
+    minimal: bool = False,
+    title: str = "Data Profiling Report"
+) -> Dict[str, Any]:
+    """
+    Generate a comprehensive HTML report using ydata-profiling (formerly pandas-profiling).
+    
+    ydata-profiling provides extensive analysis including:
+    - Overview: dataset statistics, warnings, reproduction
+    - Variables: type inference, statistics, histograms, common values, missing values
+    - Interactions: scatter plots, correlations (Pearson, Spearman, Kendall, Cramér's V)
+    - Correlations: detailed correlation matrices and heatmaps
+    - Missing values: matrix, heatmap, and dendrogram
+    - Sample: first/last rows of the dataset
+    - Duplicate rows: analysis and examples
+    
+    Args:
+        file_path: Path to the dataset CSV file
+        output_path: Where to save the HTML report
+        minimal: If True, generates faster minimal report (useful for large datasets)
+        title: Title for the report
+        
+    Returns:
+        Dict with success status, report path, and statistics
+    """
+    try:
+        from ydata_profiling import ProfileReport
+        import pandas as pd
+        
+        # Read dataset (ydata-profiling requires pandas)
+        if file_path.endswith('.csv'):
+            df = pd.read_csv(file_path)
+        elif file_path.endswith('.parquet'):
+            df = pd.read_parquet(file_path)
+        else:
+            raise ValueError(f"Unsupported file format: {file_path}")
+        
+        # Auto-optimize for large datasets to prevent memory crashes
+        rows, cols = df.shape
+        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        
+        # Check environment: HuggingFace has 16GB, Render has 512MB
+        # Allow larger datasets on high-memory environments
+        max_rows_threshold = int(os.getenv("YDATA_MAX_ROWS", "100000"))  # Default: 100k (HF), or set to 50000 for low-mem
+        max_size_threshold = float(os.getenv("YDATA_MAX_SIZE_MB", "50"))  # Default: 50MB
+        
+        # Automatic sampling only when dataset exceeds thresholds
+        should_sample = file_size_mb > max_size_threshold or rows > max_rows_threshold
+        if should_sample and not minimal:
+            sample_size = int(os.getenv("YDATA_SAMPLE_SIZE", "100000"))
+            print(f"📊 Large dataset detected: {rows:,} rows, {file_size_mb:.1f}MB")
+            print(f"⚡ Sampling to {sample_size:,} rows for memory efficiency...")
+            df = df.sample(n=min(sample_size, rows), random_state=42)
+            minimal = True  # Force minimal mode for large files
+        
+        # Force minimal mode for very large files even after sampling
+        if file_size_mb > max_size_threshold * 2:
+            minimal = True
+            print(f"⚡ Using minimal profiling mode (file size: {file_size_mb:.1f}MB)")
+        
+        # Create output directory if needed
+        os.makedirs(os.path.dirname(output_path) or "./outputs/reports", exist_ok=True)
+        
+        # Configure profile based on minimal flag
+        if minimal:
+            # Minimal mode: faster for large datasets, less memory
+            profile = ProfileReport(
+                df,
+                title=title,
+                minimal=True,
+                explorative=False,
+                samples=None,  # Disable sample display to save memory
+                correlations=None,  # Skip correlations in minimal mode
+                missing_diagrams=None,  # Skip missing diagrams
+                duplicates=None,  # Skip duplicate analysis
+                interactions=None  # Skip interactions
+            )
+        else:
+            # Full mode: comprehensive analysis
+            profile = ProfileReport(
+                df,
+                title=title,
+                explorative=True,
+                correlations={
+                    "pearson": {"calculate": True},
+                    "spearman": {"calculate": True},
+                    "kendall": {"calculate": False},  # Slow for large datasets
+                    "phi_k": {"calculate": True},
+                    "cramers": {"calculate": True},
+                }
+            )
+        
+        # Generate HTML report
+        profile.to_file(output_path)
+        
+        # Extract key statistics
+        num_features = len(df.columns)
+        num_rows = len(df)
+        num_numeric = df.select_dtypes(include=['number']).shape[1]
+        num_categorical = df.select_dtypes(include=['object', 'category']).shape[1]
+        num_boolean = df.select_dtypes(include=['bool']).shape[1]
+        missing_cells = df.isnull().sum().sum()
+        total_cells = num_rows * num_features
+        missing_pct = (missing_cells / total_cells) * 100 if total_cells > 0 else 0
+        duplicate_rows = df.duplicated().sum()
+        
+        return {
+            "success": True,
+            "report_path": output_path,
+            "message": f"✅ ydata-profiling report generated successfully at: {output_path}",
+            "statistics": {
+                "dataset_size": {
+                    "rows": num_rows,
+                    "columns": num_features,
+                    "cells": total_cells
+                },
+                "variable_types": {
+                    "numeric": num_numeric,
+                    "categorical": num_categorical,
+                    "boolean": num_boolean
+                },
+                "data_quality": {
+                    "missing_cells": missing_cells,
+                    "missing_percentage": round(missing_pct, 2),
+                    "duplicate_rows": int(duplicate_rows)
+                },
+                "report_config": {
+                    "minimal_mode": minimal,
+                    "title": title
+                }
+            }
+        }
+        
+    except ImportError:
+        return {
+            "success": False,
+            "error": "ydata-profiling not installed. Install with: pip install ydata-profiling",
+            "error_type": "MissingDependency"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to generate ydata-profiling report: {str(e)}",
+            "error_type": type(e).__name__
+        }
+
+
+def generate_sweetviz_report(
+    file_path: str,
+    target_col: Optional[str] = None,
+    compare_file_path: Optional[str] = None,
+    output_path: str = "./outputs/reports/sweetviz_report.html",
+    title: str = "Sweetviz EDA Report"
+) -> Dict[str, Any]:
+    """
+    Generate an interactive EDA report using Sweetviz.
+    
+    Sweetviz provides:
+    - Feature-by-feature analysis with distributions
+    - Target analysis (associations with target variable)
+    - Dataset comparison (train vs test)
+    - Correlations/associations for numeric and categorical features
+    
+    Args:
+        file_path: Path to the dataset CSV file
+        target_col: Optional target column for supervised analysis
+        compare_file_path: Optional second dataset for comparison (e.g., test set)
+        output_path: Where to save the HTML report
+        title: Title for the report
+        
+    Returns:
+        Dict with success status and report path
+    """
+    try:
+        import sweetviz as sv
+        import pandas as pd
+    except ImportError:
+        return {
+            "success": False,
+            "error": "sweetviz not installed. Install with: pip install sweetviz>=2.3",
+            "error_type": "MissingDependency"
+        }
+    
+    try:
+        # Read dataset
+        if file_path.endswith('.csv'):
+            df = pd.read_csv(file_path)
+        elif file_path.endswith('.parquet'):
+            df = pd.read_parquet(file_path)
+        else:
+            raise ValueError(f"Unsupported file format: {file_path}")
+        
+        # Create output directory
+        os.makedirs(os.path.dirname(output_path) or "./outputs/reports", exist_ok=True)
+        
+        # Generate report
+        if compare_file_path:
+            # Comparison report (train vs test)
+            if compare_file_path.endswith('.csv'):
+                df_compare = pd.read_csv(compare_file_path)
+            else:
+                df_compare = pd.read_parquet(compare_file_path)
+            
+            print(f"📊 Generating Sweetviz comparison report...")
+            if target_col and target_col in df.columns:
+                report = sv.compare([df, "Dataset 1"], [df_compare, "Dataset 2"], target_feat=target_col)
+            else:
+                report = sv.compare([df, "Dataset 1"], [df_compare, "Dataset 2"])
+        else:
+            # Single dataset analysis
+            print(f"📊 Generating Sweetviz EDA report...")
+            if target_col and target_col in df.columns:
+                report = sv.analyze(df, target_feat=target_col)
+            else:
+                report = sv.analyze(df)
+        
+        # Save report (show_html=False prevents auto-opening browser)
+        report.show_html(output_path, open_browser=False)
+        
+        num_features = len(df.columns)
+        num_rows = len(df)
+        
+        print(f"✅ Sweetviz report saved to: {output_path}")
+        
+        return {
+            "success": True,
+            "report_path": output_path,
+            "message": f"✅ Sweetviz report generated at: {output_path}",
+            "statistics": {
+                "rows": num_rows,
+                "columns": num_features,
+                "target_column": target_col,
+                "comparison_mode": compare_file_path is not None
+            }
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to generate Sweetviz report: {str(e)}",
+            "error_type": type(e).__name__
+        }
